@@ -99,6 +99,14 @@ client.Flush(context.Background())
 
 This sends an `AutotixTestError: …` event tagged `autotix_test=true`, bypasses sampling, and should show up in **Webhook Logs** within a few seconds.
 
+To check a token and endpoint before touching your own code, run the sample in [`examples/trigger`](examples/trigger):
+
+```bash
+AUTOTIX_WEBHOOK_TOKEN=... go run ./examples/trigger -mode test   # or -mode error, -mode panic
+```
+
+It waits for delivery, prints `Stats`, and exits non-zero if the event was not delivered. The events are real: with `AUTOTIX_PROJECT` set they open real tickets, billed once your trial ends. See its [README](examples/trigger/README.md).
+
 ## How errors reach a project
 
 Autotix decides which project (Jira project or GitHub repo) each error belongs to in this order:
