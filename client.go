@@ -47,6 +47,13 @@ type Client struct {
 	cfg       config
 	transport transport
 	log       *slog.Logger
+	envURL    string // where ReportEnvironment posts
+
+	// bgCtx scopes background work that is not an event (the startup
+	// environment report); Close cancels it.
+	bgCtx      context.Context
+	bgCancel   context.CancelFunc
+	background sync.WaitGroup
 
 	mu     sync.RWMutex // guards closed and the queue's close
 	closed bool
@@ -98,12 +105,15 @@ func New(token string, opts ...Option) (*Client, error) {
 			hmacSecret: cfg.hmacSecret,
 			userAgent:  "autotix-go/" + Version,
 		},
-		queue: make(chan *Event, cfg.queueSize),
+		queue:  make(chan *Event, cfg.queueSize),
+		envURL: envReportURL(cfg.endpoint),
 	}
+	c.bgCtx, c.bgCancel = context.WithCancel(context.Background())
 	for i := 0; i < cfg.workers; i++ {
 		c.workers.Add(1)
 		go c.worker()
 	}
+	c.startEnvironmentReport()
 	return c, nil
 }
 
@@ -206,8 +216,9 @@ func (c *Client) Flush(ctx context.Context) bool {
 }
 
 // Close stops accepting events, delivers what is already queued, and stops
-// the workers. It returns false when ctx ends before the queue drains.
-// Calling Close more than once is safe.
+// the workers. It also waits for the startup environment report if one is
+// still in flight. It returns false when ctx ends first, and cancels that
+// report then. Calling Close more than once is safe.
 func (c *Client) Close(ctx context.Context) bool {
 	if c == nil {
 		return true
@@ -222,12 +233,15 @@ func (c *Client) Close(ctx context.Context) bool {
 	done := make(chan struct{})
 	go func() {
 		c.workers.Wait()
+		c.background.Wait()
 		close(done)
 	}()
 	select {
 	case <-done:
+		c.bgCancel()
 		return true
 	case <-ctx.Done():
+		c.bgCancel()
 		return false
 	}
 }

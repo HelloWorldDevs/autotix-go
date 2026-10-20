@@ -108,6 +108,44 @@ Autotix decides which project (Jira project or GitHub repo) each error belongs t
 
 Server code with no request, such as workers and cron jobs, should always pin a project.
 
+## Vulnerability scanning
+
+Autotix can check the modules compiled into your service against the [OSV.dev](https://osv.dev) advisory database and list matches under **Vulnerabilities** in the dashboard. Turn it on by naming the service's public URL:
+
+```go
+client, err := autotix.New(os.Getenv("AUTOTIX_WEBHOOK_TOKEN"),
+    autotix.WithProject("API"),
+    autotix.WithSiteURL("https://api.example.com"),
+)
+```
+
+With `WithSiteURL` set, `New` sends one report in the background: the Go version (checked as the standard library, `stdlib`) and every dependency module from `runtime/debug.ReadBuildInfo`, with versions as compiled into the binary. A replaced module is reported as its replacement; one replaced by a local directory has no version to check and is left out. Only module paths and versions are sent, never source code. A binary's modules cannot change while it runs, so the SDK reports once per process start; Autotix re-checks the stored list against new advisories every day.
+
+- **Enable the feature.** Vulnerability scanning has to be turned on for the project. Until it is, Autotix accepts the report without storing it and the SDK logs the reason at Info.
+- **One site URL per service.** Autotix keys each inventory on the URL's scheme, host, and port, so services that share a host overwrite each other's report.
+- **Project.** The report joins the project pinned with `WithProject`. Without one it is matched to a project by the site URL, like an error's URL.
+- **Token required.** The report authenticates with the webhook token. A client with only an HMAC secret skips it (logged at Debug).
+- **Fail soft.** A failed report is logged at Warn and never affects error delivery. A rate-limited one (Autotix accepts 30 reports a minute per org, which many replicas starting together can exceed) is logged at Info, since the replica that got through reported the same modules. `Close` waits for a report still in flight and cancels it when its context ends.
+- **Fixes.** "Fix it" on a finding files a ticket. Automatic `go.mod` bump PRs are not available yet.
+
+CLIs and tests can report on demand and read the answer:
+
+```go
+client, _ := autotix.New(token,
+    autotix.WithSiteURL("https://api.example.com"),
+    autotix.WithEnvironmentReportOnStart(false), // report below instead of at startup
+)
+res, err := client.ReportEnvironment(ctx)
+switch {
+case err != nil:
+    log.Printf("environment report failed: %v", err)
+case !res.Stored:
+    log.Printf("environment report not stored: %s", res.Reason)
+default:
+    log.Printf("reported %d packages (changed: %v)", res.Packages, res.Changed)
+}
+```
+
 ## Configuration
 
 ```go
@@ -131,6 +169,8 @@ autotix.New(token,
     autotix.WithLogger(slog.Default()),         // failures log at Warn
     autotix.WithEndpoint("https://app.autotix.io/api/webhook/error"), // self-hosted
     autotix.WithHMACSecret("shared-secret"),    // sign bodies instead of sending the token
+    autotix.WithSiteURL("https://api.example.com"), // turns on vulnerability scanning
+    autotix.WithEnvironmentReportOnStart(true), // default; false to call ReportEnvironment yourself
 )
 ```
 

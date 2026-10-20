@@ -23,6 +23,9 @@
 // logged and counted in Stats. Error tracking that can take down the app it
 // watches is a footgun, so the SDK fails soft everywhere.
 //
+// Set WithSiteURL to also report the Go version and the modules compiled
+// into the binary for Autotix Vulnerability Scanning. See ReportEnvironment.
+//
 // A nil *Client is safe to use. Every method is a no-op, which lets an app
 // leave the client unset in environments where Autotix is disabled.
 package autotix

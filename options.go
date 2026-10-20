@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"time"
 )
 
@@ -45,7 +46,13 @@ type config struct {
 	workers     int
 	git         *GitContext
 	gitSet      bool
-	errs        []error
+	siteURL     string
+	// envReportOnStart sends one environment report from New when siteURL
+	// is set.
+	envReportOnStart bool
+	// readBuildInfo is debug.ReadBuildInfo, swappable in tests.
+	readBuildInfo func() (*debug.BuildInfo, bool)
+	errs          []error
 }
 
 func defaultConfig() config {
@@ -58,6 +65,9 @@ func defaultConfig() config {
 		sampleRate: 1,
 		queueSize:  DefaultQueueSize,
 		workers:    DefaultWorkers,
+
+		envReportOnStart: true,
+		readBuildInfo:    debug.ReadBuildInfo,
 	}
 }
 
@@ -191,6 +201,37 @@ func WithGitContext(g GitContext) Option {
 		c.git = &g
 		c.gitSet = true
 	})
+}
+
+// WithSiteURL names the public URL of this service, such as
+// "https://api.example.com", and turns on environment reporting for
+// Vulnerability Scanning: New sends the Go version and the modules compiled
+// into the binary once, in the background, and Autotix checks them against
+// the OSV.dev advisory database. Without a site URL nothing is reported.
+//
+// Autotix keys each inventory on the URL's scheme, host, and port, so give
+// every service its own host or port; services that share one overwrite each
+// other's report. Reporting needs the webhook token, not only an HMAC secret.
+func WithSiteURL(url string) Option {
+	return clientOption(func(c *config) {
+		if url == "" {
+			c.siteURL = ""
+			return
+		}
+		if err := validateSiteURL(url); err != nil {
+			c.errs = append(c.errs, err)
+			return
+		}
+		c.siteURL = url
+	})
+}
+
+// WithEnvironmentReportOnStart controls the background environment report
+// New sends when WithSiteURL is set. It defaults to true. Turn it off in a
+// CLI or test that calls ReportEnvironment itself, so the inventory is not
+// sent twice.
+func WithEnvironmentReportOnStart(enabled bool) Option {
+	return clientOption(func(c *config) { c.envReportOnStart = enabled })
 }
 
 // --- dual options -----------------------------------------------------------
